@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+codshield-report.csv
+.DS_Store
