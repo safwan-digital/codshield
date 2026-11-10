@@ -1,9 +1,11 @@
 <?php
 /**
  * Plugin Name:       COD Shield
- * Description:       Score your WooCommerce COD orders for fake-order risk before you dispatch. Upload an orders CSV export and get an explainable risk report — 17 checks, every score with its reasons. Companion to the COD Shield CLI (github.com/safwan-digital/codshield). Nothing is stored and nothing in your store is changed.
+ * Plugin URI:        https://github.com/safwan-digital/codshield
+ * Description:       Score your WooCommerce COD orders for fake-order risk before you dispatch. Upload an orders CSV export and get an explainable risk report — 17 checks, every score with its reasons. Nothing is stored and nothing in your store is changed.
  * Version:           1.0.0
- * Author:            Safwan Digital
+ * Author:            Safwan.Digital
+ * Author URI:        https://safwan.digital
  * License:           GPLv2 or later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       codshield
@@ -27,6 +29,28 @@ add_action('admin_menu', function () {
         'codshield_render_page'
     );
 });
+
+/* -------------------------------------------------------- plugin links */
+/* On the Plugins list (wp-admin → Plugins): a "Settings" action link    */
+/* under the plugin name that opens the plugin's own page (WooCommerce   */
+/* → COD Shield), and a developer credit link in the plugin row meta.    */
+/* The author name itself also links to the developer site, via the      */
+/* Author URI in the plugin header above.                                */
+
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
+    $settings = '<a href="' . esc_url(admin_url('admin.php?page=codshield')) . '">'
+        . esc_html__('Settings', 'codshield') . '</a>';
+    array_unshift($links, $settings);
+    return $links;
+});
+
+add_filter('plugin_row_meta', function ($links, $file) {
+    if ($file === plugin_basename(__FILE__)) {
+        $links[] = '<a href="https://safwan.digital" target="_blank" rel="noopener">'
+            . esc_html__('Developed by Safwan.Digital', 'codshield') . '</a>';
+    }
+    return $links;
+}, 10, 2);
 
 /* ------------------------------------------------------------------ rules */
 /* These mirror the COD Shield CLI (codshield.py) exactly — same checks,
