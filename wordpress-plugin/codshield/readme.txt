@@ -26,6 +26,8 @@ Every point in every score comes with its reason, printed in the report. No blac
 
 COD Shield is also available as a command-line tool: https://github.com/safwan-digital/codshield — both versions use identical rules and score the same order the same way.
 
+Developed by [Safwan.Digital](https://safwan.digital).
+
 == Installation ==
 
 1. Upload the `codshield` folder to `/wp-content/plugins/`, or install the zip via Plugins > Add New > Upload Plugin.
