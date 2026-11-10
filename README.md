@@ -14,6 +14,12 @@ COD Shield reads a plain orders CSV export, scores every COD order with a **tran
 
 Every point in every score comes with its reason, printed in the report. No black box, no machine learning, no data leaving your machine.
 
+## Two ways to use it
+
+**1. WordPress plugin (point and click)** — the `wordpress-plugin/` folder in this repo is a complete WooCommerce plugin, built to WordPress.org directory standards (GPLv2). Zip the inner `codshield` folder (or use `wordpress-plugin/codshield.zip`), upload it under Plugins > Add New > Upload Plugin, and COD Shield appears under **WooCommerce > COD Shield**: upload your orders CSV there and read the report in your admin. Same rules, same scores as the CLI. (WordPress.org directory submission is in progress.)
+
+**2. Command line (below)** — one Python file, no installation, works on any computer for any store.
+
 ## Quick start
 
 ```bash
