@@ -1,0 +1,11 @@
+Order ID,Name,Phone,Total,Risk Score,Risk Band,Suggested Action,Reasons
+1009,x x,5555555555,7499,100,HIGH,"Hold - verify by call, or take a part-prepayment first","Phone series cannot be a mobile (does not start 6-9); Phone looks typed, not real (repeated digits); Name looks incomplete; Name or address contains junk text (test/asdf/fake...); Address too short to deliver reliably; Email missing; High-value COD order (>= high threshold)"
+1002,test test,9999999999,8999,90,HIGH,"Hold - verify by call, or take a part-prepayment first","Phone looks typed, not real (repeated digits); Name or address contains junk text (test/asdf/fake...); Address too short to deliver reliably; PIN code missing; Email missing; High-value COD order (>= high threshold)"
+1004,Amit Verma,1234567890,12500,70,HIGH,"Hold - verify by call, or take a part-prepayment first","Phone series cannot be a mobile (does not start 6-9); Phone looks typed, not real (number sequence); Disposable / throwaway email domain; Very-high-value COD order (>= very-high threshold)"
+1007,Faiz M,9008023456,11500,60,HIGH,"Hold - verify by call, or take a part-prepayment first",Same phone used with different names; This phone had a cancelled/failed order before; Very-high-value COD order (>= very-high threshold)
+1001,Rahul Sharma,9811045672,1499,0,LOW,Safe to dispatch,
+1003,Priya Nair,9847012345,2499,0,LOW,Safe to dispatch,
+1008,Kavitha Reddy,9652109876,3299,0,LOW,Safe to dispatch,
+1010,Deepak Yadav,9792011234,1150,0,LOW,Safe to dispatch,
+1005,Sneha Kulkarni,9822045671,999,,PREPAID,Not scored (prepaid order),
+1006,Mohammed Faiz,9008023456,1899,,CLOSED,Not scored (order already cancelled/failed/refunded),

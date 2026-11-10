@@ -1,0 +1,11 @@
+Order ID,Billing First Name,Billing Phone,Billing Email,Billing Address 1,Billing City,Billing Postcode,Order Total,Payment Method,Order Status
+1001,Rahul Sharma,9811045672,rahul.sharma@gmail.com,"C-42, Lajpat Nagar Part 2, Near Central Market",New Delhi,110024,1499,Cash on Delivery,processing
+1002,test test,9999999999,,asdf street,Delhi,,8999,Cash on Delivery,processing
+1003,Priya Nair,9847012345,priya.nair@yahoo.in,"TC 14/221, Pattom Palace PO, Near Kesavadasapuram",Trivandrum,695004,2499,Cash on Delivery,processing
+1004,Amit Verma,1234567890,amit@mailinator.com,"House 7, MG Road",Lucknow,226001,12500,Cash on Delivery,processing
+1005,Sneha Kulkarni,9822045671,sneha.k@gmail.com,"Flat 9B, Koregaon Park, Lane 6, Near German Bakery",Pune,411001,999,UPI,processing
+1006,Mohammed Faiz,9008023456,faiz.m@outlook.com,"12, 3rd Cross, Frazer Town, Near Coles Park",Bengaluru,560005,1899,Cash on Delivery,cancelled
+1007,Faiz M,9008023456,faiz.m@outlook.com,"12, 3rd Cross, Frazer Town",Bengaluru,560005,11500,Cash on Delivery,processing
+1008,Kavitha Reddy,9652109876,kavitha.r@gmail.com,"Plot 88, Road No 12, Banjara Hills, Near City Centre Mall",Hyderabad,500034,3299,Cash on Delivery,processing
+1009,x x,5555555555,,na,Mumbai,400001,7499,Cash on Delivery,processing
+1010,Deepak Yadav,9792011234,deepak.y@gmail.com,"Village Rampur, Post Office Khas, District Jaunpur",Jaunpur,222001,1150,Cash on Delivery,processing
