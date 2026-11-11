@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       COD Shield
  * Plugin URI:        https://github.com/safwan-digital/codshield
- * Description:       Score your WooCommerce COD orders for fake-order risk before you dispatch. Upload an orders CSV export and get an explainable risk report — 17 checks, every score with its reasons. Nothing is stored and nothing in your store is changed.
- * Version:           1.0.0
+ * Description:       Score your WooCommerce COD orders for fake-order risk before you dispatch. Score the live dispatch queue directly from WooCommerce, or upload an orders CSV — 17 explainable checks, every score with its reasons. Read-only: nothing is stored and nothing in your store is changed.
+ * Version:           1.1.1
  * Author:            Safwan.Digital
  * Author URI:        https://safwan.digital
  * License:           GPLv2 or later
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CODSHIELD_VERSION', '1.0.0');
+define('CODSHIELD_VERSION', '1.1.1');
 
 add_action('admin_menu', function () {
     add_submenu_page(
@@ -53,8 +53,8 @@ add_filter('plugin_row_meta', function ($links, $file) {
 }, 10, 2);
 
 /* ------------------------------------------------------------------ rules */
-/* These mirror the COD Shield CLI (codshield.py) exactly — same checks,
-   same points, same bands — so both versions score the same order the
+/* These mirror the COD Shield CLI (codshield.py) — same checks, same
+   points, same bands — so both versions score the same order the
    same way. */
 
 function codshield_junk_tokens() {
@@ -70,6 +70,15 @@ function codshield_disposable_domains() {
 
 function codshield_bad_statuses() {
     return array('cancelled', 'canceled', 'failed', 'refunded', 'on-hold');
+}
+
+function codshield_status_is_bad($status) {
+    if (in_array($status, codshield_bad_statuses(), true)) {
+        return true;
+    }
+    /* Custom delivery-failure statuses (e.g. a shop's "RTO" status)
+       count as bad history for the repeat-offender check. */
+    return strpos($status, 'rto') !== false;
 }
 
 function codshield_normalise_phone($raw) {
@@ -142,7 +151,7 @@ function codshield_band($score) {
     return array('LOW', 'Safe to dispatch');
 }
 
-function codshield_score_order($order, $context, $high, $very_high) {
+function codshield_score_order($order, $context, $high, $very_high, $context_label = 'in this file') {
     $score = 0;
     $reasons = array();
     $add = function ($points, $reason) use (&$score, &$reasons) {
@@ -171,7 +180,7 @@ function codshield_score_order($order, $context, $high, $very_high) {
             }
         }
         if (!empty($context['counts'][$phone]) && $context['counts'][$phone] >= 3) {
-            $add(15, 'Same phone on 3+ orders in this file');
+            $add(15, 'Same phone on 3+ orders ' . $context_label);
         }
         if (!empty($context['names'][$phone]) && count($context['names'][$phone]) >= 2) {
             $add(20, 'Same phone used with different names');
@@ -219,6 +228,21 @@ function codshield_score_order($order, $context, $high, $very_high) {
     }
 
     return array(min($score, 100), $reasons);
+}
+
+function codshield_sort_results($results) {
+    $rank = array('HIGH' => 0, 'MEDIUM' => 1, 'LOW' => 2, 'PREPAID' => 3, 'CLOSED' => 4);
+    usort($results, function ($a, $b) use ($rank) {
+        $ra = $rank[$a['band']];
+        $rb = $rank[$b['band']];
+        if ($ra !== $rb) {
+            return $ra - $rb;
+        }
+        $sa = is_int($a['score']) ? $a['score'] : -1;
+        $sb = is_int($b['score']) ? $b['score'] : -1;
+        return $sb - $sa;
+    });
+    return $results;
 }
 
 
@@ -363,21 +387,222 @@ function codshield_score_file($tmp_path, $high, $very_high) {
             'action' => $action, 'reasons' => $reasons);
     }
 
-    $rank = array('HIGH' => 0, 'MEDIUM' => 1, 'LOW' => 2, 'PREPAID' => 3, 'CLOSED' => 4);
-    usort($results, function ($a, $b) use ($rank) {
-        $ra = $rank[$a['band']];
-        $rb = $rank[$b['band']];
-        if ($ra !== $rb) {
-            return $ra - $rb;
-        }
-        $sa = is_int($a['score']) ? $a['score'] : -1;
-        $sb = is_int($b['score']) ? $b['score'] : -1;
-        return $sb - $sa;
-    });
-    return array('results' => $results);
+    return array('results' => codshield_sort_results($results));
 }
 
+/* ------------------------------------------------------------ live orders */
+/* v1.1: score the dispatch queue straight from WooCommerce — no CSV.    */
+/* Orders are read with wc_get_orders(); the repeat-offender context is  */
+/* built from the store's recent order history. Read-only throughout.    */
+
+function codshield_order_to_row($order) {
+    /* Delivery risk lives at the shipping address; fall back to billing. */
+    $ship_name = trim($order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name());
+    $bill_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+    $name = $ship_name !== '' ? $ship_name : $bill_name;
+
+    $ship_addr = trim($order->get_shipping_address_1() . ' ' . $order->get_shipping_address_2());
+    $bill_addr = trim($order->get_billing_address_1() . ' ' . $order->get_billing_address_2());
+    $address = $ship_addr !== '' ? $ship_addr : $bill_addr;
+
+    $city = $order->get_shipping_city() !== '' ? $order->get_shipping_city() : $order->get_billing_city();
+    $pin = $order->get_shipping_postcode() !== '' ? $order->get_shipping_postcode() : $order->get_billing_postcode();
+
+    $phone = $order->get_billing_phone();
+    if ($phone === '' && method_exists($order, 'get_shipping_phone')) {
+        $phone = $order->get_shipping_phone();
+    }
+
+    return array(
+        'order_id'    => (string) $order->get_id(),
+        'order_url'   => $order->get_edit_order_url(),
+        'name'        => $name,
+        'phone'       => $phone,
+        'email'       => $order->get_billing_email(),
+        'address'     => $address,
+        'city'        => $city,
+        'pincode'     => $pin,
+        'total'       => (string) $order->get_total(),
+        'total_value' => floatval($order->get_total()),
+        'payment'     => $order->get_payment_method_title() !== ''
+            ? $order->get_payment_method_title() : $order->get_payment_method(),
+        'status'      => $order->get_status(),
+    );
+}
+
+function codshield_history_context($limit = 1000) {
+    /* Repeat-offender context (phone counts / names / bad history).
+       Reads the HPOS order tables directly when available — a few
+       columns for $limit rows, instead of loading $limit full order
+       objects (which can exhaust memory on shared hosting). Falls
+       back to a small object query on legacy (post-based) stores. */
+    $context = array('counts' => array(), 'names' => array(), 'bad' => array());
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'wc_orders';
+    $addr_table = $wpdb->prefix . 'wc_order_addresses';
+    $rows = null;
+    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $orders_table)) === $orders_table) {
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT o.status AS status, a.first_name AS first_name,
+                    a.last_name AS last_name, a.phone AS phone
+             FROM {$orders_table} o
+             LEFT JOIN {$addr_table} a
+               ON a.order_id = o.id AND a.address_type = 'billing'
+             WHERE o.type = 'shop_order'
+             ORDER BY o.id DESC
+             LIMIT %d",
+            $limit
+        ), ARRAY_A);
+    }
+    if (is_array($rows)) {
+        foreach ($rows as $r) {
+            $phone = codshield_normalise_phone(isset($r['phone']) ? $r['phone'] : '');
+            if ($phone === null) {
+                continue;
+            }
+            $context['counts'][$phone] = isset($context['counts'][$phone])
+                ? $context['counts'][$phone] + 1 : 1;
+            $nm = trim((isset($r['first_name']) ? $r['first_name'] : '') . ' '
+                . (isset($r['last_name']) ? $r['last_name'] : ''));
+            if ($nm !== '') {
+                $context['names'][$phone][strtolower($nm)] = true;
+            }
+            $st = isset($r['status']) ? (string) $r['status'] : '';
+            if (strpos($st, 'wc-') === 0) {
+                $st = substr($st, 3);
+            }
+            if (codshield_status_is_bad($st)) {
+                $context['bad'][$phone] = true;
+            }
+        }
+        foreach ($context['names'] as $phone => $set) {
+            $context['names'][$phone] = array_keys($set);
+        }
+        return array($context, count($rows));
+    }
+    $history = wc_get_orders(array(
+        'status'  => 'any',
+        'limit'   => 200,
+        'orderby' => 'date',
+        'order'   => 'DESC',
+        'return'  => 'objects',
+    ));
+    foreach ((array) $history as $h) {
+        $phone = codshield_normalise_phone($h->get_billing_phone());
+        if ($phone === null) {
+            continue;
+        }
+        $context['counts'][$phone] = isset($context['counts'][$phone])
+            ? $context['counts'][$phone] + 1 : 1;
+        $hname = trim($h->get_billing_first_name() . ' ' . $h->get_billing_last_name());
+        if ($hname !== '') {
+            $context['names'][$phone][strtolower($hname)] = true;
+        }
+        if (codshield_status_is_bad($h->get_status())) {
+            $context['bad'][$phone] = true;
+        }
+    }
+    foreach ($context['names'] as $phone => $set) {
+        $context['names'][$phone] = array_keys($set);
+    }
+    return array($context, is_array($history) ? count($history) : 0);
+}
+
+function codshield_score_live($statuses, $limit, $high, $very_high) {
+    $orders = wc_get_orders(array(
+        'status'  => $statuses,
+        'limit'   => $limit,
+        'orderby' => 'date',
+        'order'   => 'DESC',
+        'return'  => 'objects',
+    ));
+    if (!$orders) {
+        return array('results' => array(), 'history_count' => 0);
+    }
+
+    /* Repeat-offender context from recent store history (light read). */
+    list($context, $history_count) = codshield_history_context(1000);
+    $label = 'in recent store history (latest 1,000 orders)';
+
+    $results = array();
+    foreach ($orders as $order) {
+        $row = codshield_order_to_row($order);
+        if (codshield_status_is_bad($row['status'])) {
+            $results[] = $row + array('score' => '', 'band' => 'CLOSED',
+                'action' => 'Not scored (order already cancelled/failed/refunded)',
+                'reasons' => array());
+            continue;
+        }
+        if (!codshield_is_cod($row)) {
+            $results[] = $row + array('score' => '', 'band' => 'PREPAID',
+                'action' => 'Not scored (prepaid order)', 'reasons' => array());
+            continue;
+        }
+        list($score, $reasons) = codshield_score_order($row, $context, $high, $very_high, $label);
+        list($band, $action) = codshield_band($score);
+        $results[] = $row + array('score' => $score, 'band' => $band,
+            'action' => $action, 'reasons' => $reasons);
+    }
+
+    return array('results' => codshield_sort_results($results),
+                 'history_count' => $history_count);
+}
+
+
 /* -------------------------------------------------------------------- page */
+
+function codshield_render_results($results) {
+    $band_colors = array('HIGH' => '#b91c1c', 'MEDIUM' => '#b45309',
+                         'LOW' => '#15803d', 'PREPAID' => '#6b7280',
+                         'CLOSED' => '#6b7280');
+    $counts = array('HIGH' => 0, 'MEDIUM' => 0, 'LOW' => 0, 'PREPAID' => 0, 'CLOSED' => 0);
+    foreach ($results as $r) {
+        $counts[$r['band']]++;
+    }
+    ?>
+    <h2>Report — <?php echo count($results); ?> orders:
+        HIGH <?php echo $counts['HIGH']; ?> · MEDIUM <?php echo $counts['MEDIUM']; ?> ·
+        LOW <?php echo $counts['LOW']; ?> · PREPAID <?php echo $counts['PREPAID']; ?> ·
+        CLOSED <?php echo $counts['CLOSED']; ?></h2>
+    <table class="wp-list-table widefat fixed striped">
+        <thead>
+            <tr>
+                <th style="width:7%;">Order</th>
+                <th style="width:15%;">Customer</th>
+                <th style="width:11%;">Phone</th>
+                <th style="width:8%;">Total</th>
+                <th style="width:6%;">Score</th>
+                <th style="width:8%;">Band</th>
+                <th style="width:17%;">Suggested action</th>
+                <th>Reasons</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($results as $r) : ?>
+            <tr>
+                <td><?php if (!empty($r['order_url'])) : ?>
+                    <a href="<?php echo esc_url($r['order_url']); ?>">#<?php echo esc_html($r['order_id']); ?></a>
+                <?php else : ?>
+                    <?php echo esc_html($r['order_id']); ?>
+                <?php endif; ?></td>
+                <td><?php echo esc_html($r['name']); ?></td>
+                <td><?php echo esc_html($r['phone']); ?></td>
+                <td><?php echo esc_html($r['total']); ?></td>
+                <td><strong><?php echo esc_html($r['score']); ?></strong></td>
+                <td><strong style="color:<?php echo esc_attr($band_colors[$r['band']]); ?>;">
+                    <?php echo esc_html($r['band']); ?></strong></td>
+                <td><?php echo esc_html($r['action']); ?></td>
+                <td><?php echo esc_html(implode('; ', $r['reasons'])); ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <p class="description" style="margin-top:12px;">A score is a triage
+    signal, not a verdict — confirm HIGH orders before dispatch; do not
+    auto-cancel on a score. Phone and PIN rules are India-specific in
+    this version.</p>
+    <?php
+}
 
 function codshield_render_page() {
     if (!current_user_can('manage_woocommerce')) {
@@ -387,6 +612,50 @@ function codshield_render_page() {
     $very_high = 10000.0;
     $results = null;
     $error = '';
+    $live_note = '';
+
+    $status_labels = array();
+    foreach (wc_get_order_statuses() as $key => $label) {
+        $slug = strpos($key, 'wc-') === 0 ? substr($key, 3) : $key;
+        $status_labels[$slug] = $label;
+    }
+    $default_statuses = array();
+    foreach (array_keys($status_labels) as $slug) {
+        if ($slug === 'processing' || $slug === 'on-hold' || strpos($slug, 'hold') !== false) {
+            $default_statuses[] = $slug;
+        }
+    }
+    $chosen_statuses = $default_statuses;
+    $live_limit = 100;
+
+    if (!empty($_POST['codshield_live_run'])) {
+        check_admin_referer('codshield_live');
+        $high = isset($_POST['high_value']) ? floatval($_POST['high_value']) : $high;
+        $very_high = isset($_POST['very_high_value']) ? floatval($_POST['very_high_value']) : $very_high;
+        $live_limit = isset($_POST['live_limit']) ? intval($_POST['live_limit']) : 100;
+        if (!in_array($live_limit, array(50, 100, 200), true)) {
+            $live_limit = 100;
+        }
+        $picked = isset($_POST['live_statuses']) && is_array($_POST['live_statuses'])
+            ? array_map('sanitize_key', wp_unslash($_POST['live_statuses'])) : array();
+        $chosen_statuses = array_values(array_intersect($picked, array_keys($status_labels)));
+        if (!$chosen_statuses) {
+            $error = 'Pick at least one order status to score.';
+        } else {
+            try {
+                $out = codshield_score_live($chosen_statuses, $live_limit, $high, $very_high);
+                $results = $out['results'];
+                $live_note = 'Live queue scored — newest ' . count($results)
+                    . ' order(s) in the chosen statuses; repeat checks used the latest '
+                    . $out['history_count'] . ' orders of store history.';
+                if (!$results) {
+                    $error = 'No orders found in the chosen statuses.';
+                }
+            } catch (Throwable $e) {
+                $error = 'Live scoring failed: ' . $e->getMessage();
+            }
+        }
+    }
 
     if (!empty($_POST['codshield_run']) && !empty($_FILES['codshield_csv'])) {
         check_admin_referer('codshield_upload');
@@ -400,33 +669,79 @@ function codshield_render_page() {
         } elseif (strtolower(pathinfo($file['name'], PATHINFO_EXTENSION)) !== 'csv') {
             $error = 'Please upload a .csv file (WooCommerce > Orders > Export).';
         } else {
-            $out = codshield_score_file($file['tmp_name'], $high, $very_high);
-            if (isset($out['error'])) {
-                $error = $out['error'];
-            } else {
-                $results = $out['results'];
+            try {
+                $out = codshield_score_file($file['tmp_name'], $high, $very_high);
+                if (isset($out['error'])) {
+                    $error = $out['error'];
+                } else {
+                    $results = $out['results'];
+                }
+            } catch (Throwable $e) {
+                $error = 'CSV scoring failed: ' . $e->getMessage();
             }
         }
     }
-
-    $band_colors = array('HIGH' => '#b91c1c', 'MEDIUM' => '#b45309',
-                         'LOW' => '#15803d', 'PREPAID' => '#6b7280',
-                         'CLOSED' => '#6b7280');
     ?>
     <div class="wrap">
         <h1>COD Shield</h1>
         <p>Score cash-on-delivery orders for <strong>fake-order risk before you
-        dispatch</strong>. Export from WooCommerce &gt; Orders &gt; Export, upload the
-        CSV here, and get every COD order scored 0–100 with the exact reasons —
-        17 explainable checks (typed phone numbers, junk addresses, bad PINs,
-        throwaway emails, repeat offenders, high-value orders). The file is read
-        once and discarded; <strong>nothing is stored and nothing in your store
-        is changed</strong>.</p>
+        dispatch</strong>. Every COD order is scored 0–100 with the exact
+        reasons — 17 explainable checks (typed phone numbers, junk addresses,
+        bad PINs, throwaway emails, repeat offenders, high-value orders).
+        COD Shield is <strong>read-only</strong>: it never edits an order and
+        stores nothing.</p>
 
         <?php if ($error !== '') : ?>
             <div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div>
         <?php endif; ?>
 
+        <h2>Live dispatch queue</h2>
+        <p>Score orders straight from WooCommerce — no export needed. Pick the
+        statuses waiting for dispatch and COD Shield reads the newest orders,
+        checking each phone against your recent order history.</p>
+        <form method="post" style="margin:18px 0;">
+            <?php wp_nonce_field('codshield_live'); ?>
+            <input type="hidden" name="codshield_live_run" value="1">
+            <p>
+                <strong>Statuses:</strong><br>
+                <?php foreach ($status_labels as $slug => $label) : ?>
+                    <label style="margin-right:14px;">
+                        <input type="checkbox" name="live_statuses[]"
+                               value="<?php echo esc_attr($slug); ?>"
+                               <?php checked(in_array($slug, $chosen_statuses, true)); ?>>
+                        <?php echo esc_html($label); ?>
+                    </label>
+                <?php endforeach; ?>
+            </p>
+            <p>
+                <label>Newest orders
+                    <select name="live_limit">
+                        <?php foreach (array(50, 100, 200) as $n) : ?>
+                            <option value="<?php echo $n; ?>" <?php selected($live_limit, $n); ?>><?php echo $n; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label style="margin-left:16px;">High-value threshold (&#8377;)
+                    <input type="number" name="high_value" step="1" min="0"
+                           value="<?php echo esc_attr($high); ?>" style="width:110px;">
+                </label>
+                <label style="margin-left:16px;">Very-high-value (&#8377;)
+                    <input type="number" name="very_high_value" step="1" min="0"
+                           value="<?php echo esc_attr($very_high); ?>" style="width:110px;">
+                </label>
+                <button class="button button-primary" style="margin-left:16px;">Score live orders</button>
+            </p>
+        </form>
+
+        <?php if ($results !== null && $live_note !== '') : ?>
+            <p><em><?php echo esc_html($live_note); ?></em></p>
+            <?php codshield_render_results($results); ?>
+        <?php endif; ?>
+
+        <hr>
+        <h2>Score an exported CSV instead</h2>
+        <p>Export from WooCommerce &gt; Orders &gt; Export and upload the CSV
+        here. The file is read once and discarded; nothing is stored.</p>
         <form method="post" enctype="multipart/form-data" style="margin:18px 0;">
             <?php wp_nonce_field('codshield_upload'); ?>
             <input type="hidden" name="codshield_run" value="1">
@@ -448,49 +763,8 @@ function codshield_render_page() {
             </p>
         </form>
 
-        <?php if ($results !== null) :
-            $counts = array('HIGH' => 0, 'MEDIUM' => 0, 'LOW' => 0, 'PREPAID' => 0, 'CLOSED' => 0);
-            foreach ($results as $r) {
-                $counts[$r['band']]++;
-            }
-            ?>
-            <h2>Report — <?php echo count($results); ?> orders:
-                HIGH <?php echo $counts['HIGH']; ?> · MEDIUM <?php echo $counts['MEDIUM']; ?> ·
-                LOW <?php echo $counts['LOW']; ?> · PREPAID <?php echo $counts['PREPAID']; ?> ·
-                CLOSED <?php echo $counts['CLOSED']; ?></h2>
-            <table class="wp-list-table widefat fixed striped">
-                <thead>
-                    <tr>
-                        <th style="width:7%;">Order</th>
-                        <th style="width:15%;">Customer</th>
-                        <th style="width:11%;">Phone</th>
-                        <th style="width:8%;">Total</th>
-                        <th style="width:6%;">Score</th>
-                        <th style="width:8%;">Band</th>
-                        <th style="width:17%;">Suggested action</th>
-                        <th>Reasons</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($results as $r) : ?>
-                    <tr>
-                        <td><?php echo esc_html($r['order_id']); ?></td>
-                        <td><?php echo esc_html($r['name']); ?></td>
-                        <td><?php echo esc_html($r['phone']); ?></td>
-                        <td><?php echo esc_html($r['total']); ?></td>
-                        <td><strong><?php echo esc_html($r['score']); ?></strong></td>
-                        <td><strong style="color:<?php echo esc_attr($band_colors[$r['band']]); ?>;">
-                            <?php echo esc_html($r['band']); ?></strong></td>
-                        <td><?php echo esc_html($r['action']); ?></td>
-                        <td><?php echo esc_html(implode('; ', $r['reasons'])); ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-            <p class="description" style="margin-top:12px;">A score is a triage
-            signal, not a verdict — confirm HIGH orders before dispatch; do not
-            auto-cancel on a score. Phone and PIN rules are India-specific in
-            this version.</p>
+        <?php if ($results !== null && $live_note === '') : ?>
+            <?php codshield_render_results($results); ?>
         <?php endif; ?>
     </div>
     <?php
